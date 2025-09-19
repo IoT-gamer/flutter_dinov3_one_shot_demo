@@ -6,6 +6,8 @@ import 'package:flutter_onnxruntime/flutter_onnxruntime.dart';
 import 'package:image/image.dart' as img;
 import 'dart:math';
 
+import 'package:opencv_dart/opencv_dart.dart' as cv;
+
 // Constants
 // const int imageSize = 768;
 // const int imageSize = 320; // Reduced size for faster prototyping
@@ -140,47 +142,79 @@ img.Image _convertYUV420toRGB(List<Uint8List> planes, int width, int height) {
 }
 
 Future<Map<String, dynamic>> runSegmentation(Map<String, dynamic> args) async {
-  // --- Existing logic ---
   final OrtSession session = args['session'];
   final List<double> objectPrototype = args['prototype'];
-
-  // --- New conversion logic ---
-  // Unpack raw camera data passed from the main thread.
   final List<Uint8List> planes = args['planes'];
   final int width = args['width'];
   final int height = args['height'];
 
-  // Perform the YUV to RGB conversion inside the isolate.
-  final img.Image convertedImage = _convertYUV420toRGB(planes, width, height);
+  // Mats will be created, so we use a try/finally to ensure they are disposed.
+  cv.Mat? yuvMat, rgbMat, rotatedMat, resizedMat;
+  try {
+    // We assume an I420 format, which is common for Flutter's CameraImage.
+    final int yuvSize = width * height * 3 ~/ 2;
+    final yuvBytes = Uint8List(yuvSize);
+    yuvBytes.setRange(0, width * height, planes[0]);
+    yuvBytes.setRange(width * height, width * height * 5 ~/ 4, planes[1]);
+    yuvBytes.setRange(width * height * 5 ~/ 4, yuvSize, planes[2]);
 
-  // Rotate the image to match camera orientation.
-  final img.Image inputImage = img.copyRotate(convertedImage, angle: 90);
+    yuvMat = cv.Mat.fromList(
+      height * 3 ~/ 2,
+      width,
+      cv.MatType.CV_8UC1,
+      yuvBytes,
+    );
+    rgbMat = cv.cvtColor(yuvMat, cv.COLOR_YUV2RGB_I420);
 
-  // --- The rest of the function is the same as the original ---
-  final preprocessed = _preprocessImage(inputImage);
-  final inputTensor = await OrtValue.fromList(
-    preprocessed['input_tensor'] as Float32List,
-    preprocessed['shape'] as List<int>,
-  );
-  final inputs = {'input_image': inputTensor};
-  final outputs = await session.run(inputs);
-  final featuresTensor = outputs.values.first;
-  final List<dynamic> flattenedList = await featuresTensor.asFlattenedList();
-  final testFeatures = Float32List.fromList(flattenedList.cast<double>());
-  final numPatches = preprocessed['num_patches'] as int;
-  final featureDim = testFeatures.length ~/ numPatches;
-  final similarityScores = List<double>.filled(numPatches, 0.0);
-  for (int i = 0; i < numPatches; i++) {
-    final feature = testFeatures.sublist(i * featureDim, (i + 1) * featureDim);
-    similarityScores[i] = _cosineSimilarity(feature, objectPrototype);
+    rotatedMat = cv.rotate(rgbMat, cv.ROTATE_90_CLOCKWISE);
+
+    final int hPatches = imageSize ~/ patchSize;
+    int wPatches =
+        (rotatedMat.cols * imageSize) ~/ (rotatedMat.rows * patchSize);
+    if (wPatches % 2 != 0) wPatches -= 1;
+    final int newH = hPatches * patchSize;
+    final int newW = wPatches * patchSize;
+
+    resizedMat = cv.resize(rotatedMat, (
+      newW,
+      newH,
+    ), interpolation: cv.INTER_CUBIC);
+
+    final preprocessed = _preprocessImageFromBytes(resizedMat.data, newW, newH);
+
+    final inputTensor = await OrtValue.fromList(
+      preprocessed['input_tensor'] as Float32List,
+      preprocessed['shape'] as List<int>,
+    );
+    final inputs = {'input_image': inputTensor};
+    final outputs = await session.run(inputs);
+    final featuresTensor = outputs.values.first;
+    final List<dynamic> flattenedList = await featuresTensor.asFlattenedList();
+    final testFeatures = Float32List.fromList(flattenedList.cast<double>());
+    final numPatches = preprocessed['num_patches'] as int;
+    final featureDim = testFeatures.length ~/ numPatches;
+    final similarityScores = List<double>.filled(numPatches, 0.0);
+    for (int i = 0; i < numPatches; i++) {
+      final feature = testFeatures.sublist(
+        i * featureDim,
+        (i + 1) * featureDim,
+      );
+      similarityScores[i] = _cosineSimilarity(feature, objectPrototype);
+    }
+    await inputTensor.dispose();
+    await featuresTensor.dispose();
+    return {
+      'scores': similarityScores,
+      'width': preprocessed['w_patches'],
+      'height': preprocessed['h_patches'],
+    };
+  } finally {
+    // IMPORTANT - Dispose all Mats to prevent memory leaks.
+    yuvMat?.dispose();
+    rgbMat?.dispose();
+    rotatedMat?.dispose();
+    resizedMat?.dispose();
   }
-  await inputTensor.dispose();
-  await featuresTensor.dispose();
-  return {
-    'scores': similarityScores,
-    'width': preprocessed['w_patches'],
-    'height': preprocessed['h_patches'],
-  };
 }
 
 Map<String, dynamic> _preprocessForPrototyping(img.Image rgb, img.Image mask) {
@@ -204,6 +238,39 @@ Map<String, dynamic> _preprocessForPrototyping(img.Image rgb, img.Image mask) {
   // );
 
   return {...preprocessedImage, 'patch_mask': patchMask};
+}
+
+Map<String, dynamic> _preprocessImageFromBytes(
+  Uint8List imageBytes,
+  int newW,
+  int newH,
+) {
+  final int hPatches = newH ~/ patchSize;
+  final int wPatches = newW ~/ patchSize;
+  final int numPatches = wPatches * hPatches;
+
+  final inputTensor = Float32List(1 * 3 * newH * newW);
+  int bufferIndex = 0;
+
+  // This loop rearranges the RGB data into the NCHW format required by the model
+  // and applies the ImageNet normalization constants.
+  for (int c = 0; c < 3; c++) {
+    for (int y = 0; y < newH; y++) {
+      for (int x = 0; x < newW; x++) {
+        final int pixelIndex = (y * newW + x) * 3;
+        final double val = imageBytes[pixelIndex + c] / 255.0;
+        inputTensor[bufferIndex++] = (val - imagenetMean[c]) / imagenetStd[c];
+      }
+    }
+  }
+
+  return {
+    'input_tensor': inputTensor,
+    'shape': [1, 3, newH, newW],
+    'w_patches': wPatches,
+    'h_patches': hPatches,
+    'num_patches': numPatches,
+  };
 }
 
 Map<String, dynamic> _preprocessImage(img.Image image) {

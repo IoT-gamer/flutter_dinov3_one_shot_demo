@@ -39,6 +39,7 @@ dependencies:
   camera: ^0.11.2
   image_picker: ^1.2.0
   image: ^4.5.4
+  opencv_dart: ^1.4.3
   path_provider: ^2.1.5
   path: ^1.9.1
 
@@ -96,3 +97,11 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+hooks:
+  user_defines:
+    dartcv4:
+      include_modules:
+        - core      # Always required for basic structures like cv.Mat
+        - imgproc   # Needed for morphologyEx, getStructuringElement, etc.
+        - imgcodecs # Needed for imdecode
