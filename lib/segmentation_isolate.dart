@@ -101,10 +101,62 @@ Future<List<double>> createPrototype(Map<String, dynamic> args) async {
   return objectPrototype;
 }
 
+img.Image _convertYUV420toRGB(List<Uint8List> planes, int width, int height) {
+  final yPlane = planes[0];
+  final uPlane = planes[1];
+  final vPlane = planes[2];
+
+  final image = img.Image(width: width, height: height);
+
+  final int uvRowStride = width; // For 4:2:0, UV planes are half width/height
+  final int uvPixelStride = 1;
+
+  for (int y = 0; y < height; y++) {
+    for (int x = 0; x < width; x++) {
+      final int yIndex = y * width + x;
+
+      // UV index calculation for 4:2:0
+      final int uvx = x ~/ 2;
+      final int uvy = y ~/ 2;
+      final int uIndex = uvy * uvRowStride + uvx * uvPixelStride;
+      final int vIndex = uvy * uvRowStride + uvx * uvPixelStride;
+
+      final int yValue = yPlane[yIndex];
+      final int uValue = uPlane[uIndex];
+      final int vValue = vPlane[vIndex];
+
+      // Formula to convert YUV to RGB
+      final int r = (yValue + 1.13983 * (vValue - 128)).round().clamp(0, 255);
+      final int g =
+          (yValue - 0.39465 * (uValue - 128) - 0.58060 * (vValue - 128))
+              .round()
+              .clamp(0, 255);
+      final int b = (yValue + 2.03211 * (uValue - 128)).round().clamp(0, 255);
+
+      image.setPixelRgb(x, y, r, g, b);
+    }
+  }
+  return image;
+}
+
 Future<Map<String, dynamic>> runSegmentation(Map<String, dynamic> args) async {
+  // --- Existing logic ---
   final OrtSession session = args['session'];
   final List<double> objectPrototype = args['prototype'];
-  final img.Image inputImage = args['image'];
+
+  // --- New conversion logic ---
+  // Unpack raw camera data passed from the main thread.
+  final List<Uint8List> planes = args['planes'];
+  final int width = args['width'];
+  final int height = args['height'];
+
+  // Perform the YUV to RGB conversion inside the isolate.
+  final img.Image convertedImage = _convertYUV420toRGB(planes, width, height);
+
+  // Rotate the image to match camera orientation.
+  final img.Image inputImage = img.copyRotate(convertedImage, angle: 90);
+
+  // --- The rest of the function is the same as the original ---
   final preprocessed = _preprocessImage(inputImage);
   final inputTensor = await OrtValue.fromList(
     preprocessed['input_tensor'] as Float32List,

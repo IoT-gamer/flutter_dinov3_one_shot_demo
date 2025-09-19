@@ -1,5 +1,3 @@
-// lib/camera_screen.dart
-
 import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -33,7 +31,6 @@ class _CameraScreenState extends State<CameraScreen> {
 
   OrtSession? _session;
   List<double>? _objectPrototype;
-
   bool _isProcessing = false;
   bool _isSegmenting = false;
   ui.Image? _overlayImage;
@@ -84,12 +81,14 @@ class _CameraScreenState extends State<CameraScreen> {
     }
     setState(() => _isProcessing = true);
 
-    final image = _convertCameraImage(cameraImage);
     _isolate
         .compute(runSegmentation, {
           'session': _session!,
           'prototype': _objectPrototype!,
-          'image': image,
+          // Pass the raw data needed for conversion in the isolate
+          'planes': cameraImage.planes.map((p) => p.bytes).toList(),
+          'width': cameraImage.width,
+          'height': cameraImage.height,
         })
         .then((result) {
           if (result.isNotEmpty) {
@@ -105,7 +104,6 @@ class _CameraScreenState extends State<CameraScreen> {
 
   Future<void> _setReferencePrototype() async {
     if (_session == null || _isCreatingPrototype) return;
-
     setState(() => _isCreatingPrototype = true);
 
     try {
@@ -113,15 +111,12 @@ class _CameraScreenState extends State<CameraScreen> {
       final XFile? pickedFile = await picker.pickImage(
         source: ImageSource.gallery,
       );
-
       if (pickedFile == null) {
-        // User canceled the picker
         return;
       }
 
       final Uint8List fileBytes = await pickedFile.readAsBytes();
       final img.Image? image = img.decodePng(fileBytes);
-
       if (image == null || image.numChannels != 4) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -139,7 +134,6 @@ class _CameraScreenState extends State<CameraScreen> {
         'session': _session!,
         'bytes': fileBytes,
       });
-
       if (!mounted) return;
 
       if (prototype.isNotEmpty) {
@@ -258,32 +252,12 @@ class _CameraScreenState extends State<CameraScreen> {
       ),
     );
   }
-
-  img.Image _convertCameraImage(CameraImage image) {
-    img.Image resultImage;
-    if (image.format.group == ImageFormatGroup.yuv420) {
-      resultImage = img.Image.fromBytes(
-        width: image.width,
-        height: image.height,
-        bytes: image.planes[0].bytes.buffer,
-        order: img.ChannelOrder.red,
-      );
-    } else {
-      resultImage = img.Image.fromBytes(
-        width: image.width,
-        height: image.height,
-        bytes: image.planes[0].bytes.buffer,
-        order: img.ChannelOrder.bgra,
-      );
-    }
-
-    return img.copyRotate(resultImage, angle: 90);
-  }
 }
 
 class OverlayPainter extends CustomPainter {
   final ui.Image image;
   OverlayPainter(this.image);
+
   @override
   void paint(Canvas canvas, Size size) {
     paintImage(
