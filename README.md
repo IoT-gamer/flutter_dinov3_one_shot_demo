@@ -89,7 +89,7 @@ You need a reference image of the object you want to segment. The image must be 
 
 You can easily tweak the model's behavior by modifying the constants in `lib/constants.dart`:
 
-* `inputSize`: The input resolution for the model. Smaller sizes are faster but may be less accurate.
+* `inputSize`: The input resolution for the model. Smaller sizes are faster but may be less accurate. For example, try comparing 320, 400, 768.
 
 * `similarityThreshold`: A value between 0.0 and 1.0 that determines how similar a patch must be to the prototype to be included in the mask. Higher values are stricter.
 
