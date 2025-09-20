@@ -1,3 +1,5 @@
+// lib/segmentation_isolate.dart
+
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/services.dart';
@@ -20,7 +22,6 @@ Future<OrtSession> initializeSession(Map<String, dynamic> args) async {
   BackgroundIsolateBinaryMessenger.ensureInitialized(
     args['token'] as RootIsolateToken,
   );
-
   final String modelPath = args['path'];
   final ort = OnnxRuntime();
   final providers = Platform.isAndroid
@@ -44,7 +45,6 @@ Future<List<double>> createPrototype(Map<String, dynamic> args) async {
     height: image.height,
     numChannels: 1,
   );
-
   for (final pixel in image) {
     maskImage.setPixelR(pixel.x, pixel.y, pixel.a);
   }
@@ -54,7 +54,8 @@ Future<List<double>> createPrototype(Map<String, dynamic> args) async {
   double avgVal = 0;
   if (maskImage.isNotEmpty) {
     for (final pixel in maskImage) {
-      final pVal = pixel.r; // In a single-channel image, R is the value
+      final pVal = pixel.r;
+      // In a single-channel image, R is the value
       if (pVal > maxVal) maxVal = pVal;
       if (pVal < minVal) minVal = pVal;
       avgVal += pVal;
@@ -67,7 +68,6 @@ Future<List<double>> createPrototype(Map<String, dynamic> args) async {
   print(
     'Isolate Debug: Mask Stats -> Max: $maxVal, Min: $minVal, Avg: $avgVal',
   );
-
   final preprocessedData = _preprocessForPrototyping(rgbImage, maskImage);
   final inputTensor = await OrtValue.fromList(
     preprocessedData['input_tensor'] as Float32List,
@@ -110,13 +110,12 @@ img.Image _convertYUV420toRGB(List<Uint8List> planes, int width, int height) {
 
   final image = img.Image(width: width, height: height);
 
-  final int uvRowStride = width; // For 4:2:0, UV planes are half width/height
+  final int uvRowStride = width;
+  // For 4:2:0, UV planes are half width/height
   final int uvPixelStride = 1;
-
   for (int y = 0; y < height; y++) {
     for (int x = 0; x < width; x++) {
       final int yIndex = y * width + x;
-
       // UV index calculation for 4:2:0
       final int uvx = x ~/ 2;
       final int uvy = y ~/ 2;
@@ -126,7 +125,6 @@ img.Image _convertYUV420toRGB(List<Uint8List> planes, int width, int height) {
       final int yValue = yPlane[yIndex];
       final int uValue = uPlane[uIndex];
       final int vValue = vPlane[vIndex];
-
       // Formula to convert YUV to RGB
       final int r = (yValue + 1.13983 * (vValue - 128)).round().clamp(0, 255);
       final int g =
@@ -147,9 +145,13 @@ Future<Map<String, dynamic>> runSegmentation(Map<String, dynamic> args) async {
   final List<Uint8List> planes = args['planes'];
   final int width = args['width'];
   final int height = args['height'];
+  final bool showLargestOnly = args['showLargestOnly'] ?? false;
 
   // Mats will be created, so we use a try/finally to ensure they are disposed.
   cv.Mat? yuvMat, rgbMat, rotatedMat, resizedMat;
+  // Mats for post-processing
+  cv.Mat? maskMat, labels, stats, centroids;
+
   try {
     // We assume an I420 format, which is common for Flutter's CameraImage.
     final int yuvSize = width * height * 3 ~/ 2;
@@ -157,7 +159,6 @@ Future<Map<String, dynamic>> runSegmentation(Map<String, dynamic> args) async {
     yuvBytes.setRange(0, width * height, planes[0]);
     yuvBytes.setRange(width * height, width * height * 5 ~/ 4, planes[1]);
     yuvBytes.setRange(width * height * 5 ~/ 4, yuvSize, planes[2]);
-
     yuvMat = cv.Mat.fromList(
       height * 3 ~/ 2,
       width,
@@ -179,7 +180,6 @@ Future<Map<String, dynamic>> runSegmentation(Map<String, dynamic> args) async {
       newW,
       newH,
     ), interpolation: cv.INTER_CUBIC);
-
     final preprocessed = _preprocessImageFromBytes(resizedMat.data, newW, newH);
 
     final inputTensor = await OrtValue.fromList(
@@ -203,8 +203,64 @@ Future<Map<String, dynamic>> runSegmentation(Map<String, dynamic> args) async {
     }
     await inputTensor.dispose();
     await featuresTensor.dispose();
+
+    List<double> finalScores = similarityScores;
+    if (showLargestOnly) {
+      final w = preprocessed['w_patches'] as int;
+      final h = preprocessed['h_patches'] as int;
+
+      final maskData = Uint8List.fromList(
+        similarityScores
+            .map((s) => s > AppConstants.similarityThreshold ? 255 : 0)
+            .toList(),
+      );
+      maskMat = cv.Mat.fromList(h, w, cv.MatType.CV_8UC1, maskData);
+
+      labels = cv.Mat.empty();
+      stats = cv.Mat.empty();
+      centroids = cv.Mat.empty();
+
+      cv.connectedComponentsWithStats(
+        maskMat,
+        labels,
+        stats,
+        centroids,
+        8,
+        cv.MatType.CV_32S,
+        cv.CCL_DEFAULT,
+      );
+
+      if (stats.rows > 1) {
+        int maxArea = 0;
+        int largestComponentLabel = 0;
+        // Start from 1 to skip background component
+        for (int i = 1; i < stats.rows; i++) {
+          final area = stats.at<int>(i, cv.CC_STAT_AREA);
+          if (area > maxArea) {
+            maxArea = area;
+            largestComponentLabel = i;
+          }
+        }
+
+        if (largestComponentLabel != 0) {
+          final filteredScores = List<double>.filled(numPatches, 0.0);
+
+          // --- FIX: Use the .data property and view it as an Int32List ---
+          final labelsData = labels.data.buffer.asInt32List();
+          for (int i = 0; i < numPatches; i++) {
+            if (labelsData[i] == largestComponentLabel) {
+              filteredScores[i] = similarityScores[i];
+            }
+          }
+          // -----------------------------------------------------------------
+
+          finalScores = filteredScores;
+        }
+      }
+    }
+
     return {
-      'scores': similarityScores,
+      'scores': finalScores,
       'width': preprocessed['w_patches'],
       'height': preprocessed['h_patches'],
     };
@@ -214,6 +270,11 @@ Future<Map<String, dynamic>> runSegmentation(Map<String, dynamic> args) async {
     rgbMat?.dispose();
     rotatedMat?.dispose();
     resizedMat?.dispose();
+    // Dispose new Mats
+    maskMat?.dispose();
+    labels?.dispose();
+    stats?.dispose();
+    centroids?.dispose();
   }
 }
 
@@ -230,13 +291,11 @@ Map<String, dynamic> _preprocessForPrototyping(img.Image rgb, img.Image mask) {
   // Use '.red' for single-channel mask data.
   final maskBytes = resizedMask.getBytes(order: img.ChannelOrder.red);
   final patchMask = maskBytes.map((e) => e > 127).toList();
-
   // DEBUG: Print how many foreground patches were found after thresholding.
   // final trueCount = patchMask.where((e) => e).length;
   // print(
   //   'Isolate Debug: Patch Mask -> Count: ${patchMask.length}, True values: $trueCount',
   // );
-
   return {...preprocessedImage, 'patch_mask': patchMask};
 }
 
@@ -248,10 +307,8 @@ Map<String, dynamic> _preprocessImageFromBytes(
   final int hPatches = newH ~/ patchSize;
   final int wPatches = newW ~/ patchSize;
   final int numPatches = wPatches * hPatches;
-
   final inputTensor = Float32List(1 * 3 * newH * newW);
   int bufferIndex = 0;
-
   // This loop rearranges the RGB data into the NCHW format required by the model
   // and applies the ImageNet normalization constants.
   for (int c = 0; c < 3; c++) {

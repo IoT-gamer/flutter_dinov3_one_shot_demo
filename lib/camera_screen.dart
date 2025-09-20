@@ -1,3 +1,5 @@
+// lib/camera_screen.dart
+
 import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -36,6 +38,7 @@ class _CameraScreenState extends State<CameraScreen> {
   ui.Image? _overlayImage;
 
   bool _isCreatingPrototype = false;
+  bool _showLargestAreaOnly = false;
 
   @override
   void initState() {
@@ -89,6 +92,7 @@ class _CameraScreenState extends State<CameraScreen> {
           'planes': cameraImage.planes.map((p) => p.bytes).toList(),
           'width': cameraImage.width,
           'height': cameraImage.height,
+          'showLargestOnly': _showLargestAreaOnly,
         })
         .then((result) {
           if (result.isNotEmpty) {
@@ -162,10 +166,14 @@ class _CameraScreenState extends State<CameraScreen> {
     final pixels = Uint8List(width * height * 4);
     for (int i = 0; i < scores.length; i++) {
       if (scores[i] > similarityThreshold) {
-        pixels[i * 4 + 0] = 30; // Red
-        pixels[i * 4 + 1] = 255; // Green
-        pixels[i * 4 + 2] = 150; // Blue
-        pixels[i * 4 + 3] = 170; // Alpha
+        pixels[i * 4 + 0] = 30;
+        // Red
+        pixels[i * 4 + 1] = 255;
+        // Green
+        pixels[i * 4 + 2] = 150;
+        // Blue
+        pixels[i * 4 + 3] = 170;
+        // Alpha
       }
     }
 
@@ -248,6 +256,19 @@ class _CameraScreenState extends State<CameraScreen> {
             backgroundColor: _isCreatingPrototype ? Colors.grey : null,
             child: Icon(_isSegmenting ? Icons.stop : Icons.play_arrow),
           ),
+          const SizedBox(height: 16),
+          FloatingActionButton(
+            onPressed: () {
+              setState(() {
+                _showLargestAreaOnly = !_showLargestAreaOnly;
+              });
+            },
+            tooltip: AppConstants.largestAreaTooltip,
+            backgroundColor: _showLargestAreaOnly
+                ? Theme.of(context).primaryColor
+                : Colors.grey,
+            child: const Icon(Icons.filter_center_focus),
+          ),
         ],
       ),
     );
@@ -257,7 +278,6 @@ class _CameraScreenState extends State<CameraScreen> {
 class OverlayPainter extends CustomPainter {
   final ui.Image image;
   OverlayPainter(this.image);
-
   @override
   void paint(Canvas canvas, Size size) {
     paintImage(

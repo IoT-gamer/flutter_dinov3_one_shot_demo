@@ -8,6 +8,8 @@ This repository contains a Flutter application demonstrating real-time, one-shot
 
 * **Real-Time Segmentation:** Segments objects directly from the live camera feed.
 
+* **Largest Area Filtering:** An option to display only the largest contiguous segmented object, removing smaller, potentially noisy detections.
+
 * **ONNX Runtime:** Utilizes the `flutter_onnxruntime` package for efficient, cross-platform model inference.
 
 * **Hardware Acceleration:** Leverages platform-specific accelerators like NNAPI on Android and Core ML on iOS  for better performance.
@@ -84,6 +86,13 @@ You need a reference image of the object you want to segment. The image must be 
     2. Point your camera at different scenes. The app will highlight any objects it recognizes as being similar to your reference prototype.
 
     3. Tap the **Stop** icon to pause the segmentation process.
+
+4. Filter for Largest Area
+    1. While segmentation is active, you may see multiple disconnected areas highlighted.
+
+    2. To focus only on the main object, tap the Filter icon (`filter_center_focus`).
+
+    3. This will toggle a mode that processes the mask and displays only the largest single area, helping to reduce noise.
 
 ## 🔧 Configuration
 
