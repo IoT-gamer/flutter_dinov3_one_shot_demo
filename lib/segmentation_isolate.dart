@@ -1,5 +1,3 @@
-// lib/segmentation_isolate.dart
-
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/services.dart';
@@ -11,8 +9,6 @@ import 'dart:math';
 import 'package:opencv_dart/opencv_dart.dart' as cv;
 
 // Constants
-// const int imageSize = 768;
-// const int imageSize = 320; // Reduced size for faster prototyping
 const int imageSize = AppConstants.inputSize;
 const int patchSize = 16;
 final imagenetMean = [0.485, 0.456, 0.406];
@@ -109,13 +105,14 @@ Future<Map<String, dynamic>> runSegmentation(Map<String, dynamic> args) async {
   final List<Uint8List> planes = args['planes'];
   final int width = args['width'];
   final int height = args['height'];
+  // Get threshold from args, with a default fallback.
+  final double similarityThreshold = args['threshold'] ?? 0.7;
   final bool showLargestOnly = args['showLargestOnly'] ?? false;
 
   // Mats will be created, so we use a try/finally to ensure they are disposed.
   cv.Mat? yuvMat, rgbMat, rotatedMat, resizedMat;
   // Mats for post-processing
   cv.Mat? maskMat, labels, stats, centroids;
-
   try {
     // We assume an I420 format, which is common for Flutter's CameraImage.
     final int yuvSize = width * height * 3 ~/ 2;
@@ -172,10 +169,10 @@ Future<Map<String, dynamic>> runSegmentation(Map<String, dynamic> args) async {
     if (showLargestOnly) {
       final w = preprocessed['w_patches'] as int;
       final h = preprocessed['h_patches'] as int;
-
       final maskData = Uint8List.fromList(
         similarityScores
-            .map((s) => s > AppConstants.similarityThreshold ? 255 : 0)
+            // Use the dynamic threshold here
+            .map((s) => s > similarityThreshold ? 255 : 0)
             .toList(),
       );
       maskMat = cv.Mat.fromList(h, w, cv.MatType.CV_8UC1, maskData);
@@ -183,7 +180,6 @@ Future<Map<String, dynamic>> runSegmentation(Map<String, dynamic> args) async {
       labels = cv.Mat.empty();
       stats = cv.Mat.empty();
       centroids = cv.Mat.empty();
-
       cv.connectedComponentsWithStats(
         maskMat,
         labels,
@@ -193,7 +189,6 @@ Future<Map<String, dynamic>> runSegmentation(Map<String, dynamic> args) async {
         cv.MatType.CV_32S,
         cv.CCL_DEFAULT,
       );
-
       if (stats.rows > 1) {
         int maxArea = 0;
         int largestComponentLabel = 0;
@@ -208,15 +203,12 @@ Future<Map<String, dynamic>> runSegmentation(Map<String, dynamic> args) async {
 
         if (largestComponentLabel != 0) {
           final filteredScores = List<double>.filled(numPatches, 0.0);
-
-          // --- FIX: Use the .data property and view it as an Int32List ---
           final labelsData = labels.data.buffer.asInt32List();
           for (int i = 0; i < numPatches; i++) {
             if (labelsData[i] == largestComponentLabel) {
               filteredScores[i] = similarityScores[i];
             }
           }
-          // -----------------------------------------------------------------
 
           finalScores = filteredScores;
         }
@@ -255,11 +247,7 @@ Map<String, dynamic> _preprocessForPrototyping(img.Image rgb, img.Image mask) {
   // Use '.red' for single-channel mask data.
   final maskBytes = resizedMask.getBytes(order: img.ChannelOrder.red);
   final patchMask = maskBytes.map((e) => e > 127).toList();
-  // DEBUG: Print how many foreground patches were found after thresholding.
-  // final trueCount = patchMask.where((e) => e).length;
-  // print(
-  //   'Isolate Debug: Patch Mask -> Count: ${patchMask.length}, True values: $trueCount',
-  // );
+
   return {...preprocessedImage, 'patch_mask': patchMask};
 }
 

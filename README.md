@@ -8,6 +8,8 @@ This repository contains a Flutter application demonstrating real-time, one-shot
 
 * **Real-Time Segmentation:** Segments objects directly from the live camera feed.
 
+* **Adjustable Sensitivity:** Fine-tune the segmentation sensitivity in real-time using an on-screen slider.
+
 * **Largest Area Filtering:** An option to display only the largest contiguous segmented object, removing smaller, potentially noisy detections.
 
 * **ONNX Runtime:** Utilizes the `flutter_onnxruntime` package for efficient, cross-platform model inference.
@@ -87,6 +89,12 @@ You need a reference image of the object you want to segment. The image must be 
 
     3. Tap the **Stop** icon to pause the segmentation process.
 
+4. Adjust Segmentation Sensitivity
+    1. Tap the Tune icon (Tuning icon) in the top-right corner of the app bar to show or hide the sensitivity slider.
+
+    2. Drag the slider to adjust the similarity threshold in real-time. A higher value makes the segmentation stricter, while a lower value is more lenient.
+
+
 4. Filter for Largest Area
     1. While segmentation is active, you may see multiple disconnected areas highlighted.
 
@@ -99,8 +107,6 @@ You need a reference image of the object you want to segment. The image must be 
 You can easily tweak the model's behavior by modifying the constants in `lib/constants.dart`:
 
 * `inputSize`: The input resolution for the model. Smaller sizes are faster but may be less accurate. For example, try comparing 320, 400, 768.
-
-* `similarityThreshold`: A value between 0.0 and 1.0 that determines how similar a patch must be to the prototype to be included in the mask. Higher values are stricter.
 
 * `frameSkipCount`: The number of camera frames to skip between each processing cycle. Increasing this value improves performance but reduces the real-time feel.
 

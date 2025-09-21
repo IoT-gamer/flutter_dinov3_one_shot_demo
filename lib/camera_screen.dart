@@ -27,7 +27,7 @@ class _CameraScreenState extends State<CameraScreen> {
   late CameraController _controller;
   late Future<void> _initializeControllerFuture;
   late final StatefulIsolate _isolate;
-  static const double similarityThreshold = AppConstants.similarityThreshold;
+  double _similarityThreshold = 0.7;
   int _frameCounter = 0;
   static const int frameSkipCount = AppConstants.frameSkipCount;
 
@@ -39,6 +39,8 @@ class _CameraScreenState extends State<CameraScreen> {
 
   bool _isCreatingPrototype = false;
   bool _showLargestAreaOnly = false;
+  // State variable to control slider visibility
+  bool _showSlider = false;
 
   @override
   void initState() {
@@ -88,10 +90,10 @@ class _CameraScreenState extends State<CameraScreen> {
         .compute(runSegmentation, {
           'session': _session!,
           'prototype': _objectPrototype!,
-          // Pass the raw data needed for conversion in the isolate
           'planes': cameraImage.planes.map((p) => p.bytes).toList(),
           'width': cameraImage.width,
           'height': cameraImage.height,
+          'threshold': _similarityThreshold,
           'showLargestOnly': _showLargestAreaOnly,
         })
         .then((result) {
@@ -165,15 +167,11 @@ class _CameraScreenState extends State<CameraScreen> {
   void _updateOverlay(List<double> scores, int width, int height) {
     final pixels = Uint8List(width * height * 4);
     for (int i = 0; i < scores.length; i++) {
-      if (scores[i] > similarityThreshold) {
-        pixels[i * 4 + 0] = 30;
-        // Red
-        pixels[i * 4 + 1] = 255;
-        // Green
-        pixels[i * 4 + 2] = 150;
-        // Blue
-        pixels[i * 4 + 3] = 170;
-        // Alpha
+      if (scores[i] > _similarityThreshold) {
+        pixels[i * 4 + 0] = 30; // Red
+        pixels[i * 4 + 1] = 255; // Green
+        pixels[i * 4 + 2] = 150; // Blue
+        pixels[i * 4 + 3] = 170; // Alpha
       }
     }
 
@@ -198,7 +196,25 @@ class _CameraScreenState extends State<CameraScreen> {
   Widget build(BuildContext context) {
     bool isReady = _objectPrototype != null;
     return Scaffold(
-      appBar: AppBar(title: const Text('DINOv3 One-Shot Segmentation')),
+      appBar: AppBar(
+        title: const Text('DINOv3 One-Shot Segmentation'),
+        actions: [
+          IconButton(
+            icon: Icon(
+              Icons.tune,
+              color: _showSlider
+                  ? Theme.of(context).colorScheme.secondary
+                  : null,
+            ),
+            tooltip: 'Toggle Threshold Slider',
+            onPressed: () {
+              setState(() {
+                _showSlider = !_showSlider;
+              });
+            },
+          ),
+        ],
+      ),
       body: FutureBuilder<void>(
         future: _initializeControllerFuture,
         builder: (context, snapshot) {
@@ -215,6 +231,38 @@ class _CameraScreenState extends State<CameraScreen> {
                       height: _overlayImage!.height.toDouble(),
                       child: CustomPaint(
                         painter: OverlayPainter(_overlayImage!),
+                      ),
+                    ),
+                  ),
+                if (_showSlider)
+                  Positioned(
+                    bottom: 120,
+                    left: 20,
+                    right: 20,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.5),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.tune, color: Colors.white),
+                          Expanded(
+                            child: Slider(
+                              value: _similarityThreshold,
+                              min: 0.5,
+                              max: 0.9,
+                              divisions: 8,
+                              label: _similarityThreshold.toStringAsFixed(2),
+                              onChanged: (double value) {
+                                setState(() {
+                                  _similarityThreshold = value;
+                                });
+                              },
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
