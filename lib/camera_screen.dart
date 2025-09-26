@@ -100,14 +100,18 @@ class _CameraScreenState extends State<CameraScreen> {
           'showLargestOnly': _showLargestAreaOnly,
         })
         .then((result) {
-          if (result.isNotEmpty) {
+          // IMPORTANT: Check if segmentation is still active before updating the UI.
+          // This prevents a result from a previous frame from drawing the overlay
+          // after the user has already stopped the segmentation.
+          if (mounted && _isSegmenting && result.isNotEmpty) {
             _updateOverlay(
               result['scores'] as List<double>,
               result['width'] as int,
               result['height'] as int,
             );
           }
-          setState(() => _isProcessing = false);
+
+          if (mounted) setState(() => _isProcessing = false);
         });
   }
 
@@ -325,7 +329,12 @@ class _CameraScreenState extends State<CameraScreen> {
                       );
                       return;
                     }
-                    setState(() => _isSegmenting = !_isSegmenting);
+                    setState(() {
+                      _isSegmenting = !_isSegmenting;
+                      if (!_isSegmenting) {
+                        _overlayImage = null;
+                      }
+                    });
                   },
             tooltip: 'Toggle Segmentation',
             backgroundColor: _isCreatingPrototype ? Colors.grey : null,
