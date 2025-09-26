@@ -347,7 +347,7 @@ class _CameraScreenState extends State<CameraScreen> {
                 _showLargestAreaOnly = !_showLargestAreaOnly;
               });
             },
-            tooltip: AppConstants.largestAreaTooltip,
+            tooltip: 'Toggle Largest Area Only',
             backgroundColor: _showLargestAreaOnly
                 ? Theme.of(context).primaryColor
                 : Colors.grey,
