@@ -2,6 +2,23 @@
 
 This repository contains a Flutter application demonstrating real-time, one-shot object segmentation using a DINOv3 feature extractor model. The app uses the device's camera feed, allowing users to define a target object with a single reference image and see it segmented live.
 
+## 📷 Screenshots
+<div style="display: flex; gap: 3px; flex-wrap: wrap; justify-content: left; align-items: left;">
+<figure>
+<img src="docs/images/no_mask.jpg" alt="drawing" height="200"/>
+<figcaption>No Mask</figcaption>
+</figure>
+<figure>
+<img src="docs/images/low_res_mask.jpg" alt="drawing" height="200"/>
+<figcaption>Low-res Mask</figcaption>
+</figure>
+<figure>
+<img src="docs/images/high_res_mask.jpg" alt="drawing" height="200"/>
+<figcaption>High-res Mask</figcaption>
+</figure>
+</div>
+
+
 ## 📋 Features
 
 * **One-Shot Learning:** Define an object to segment using just one example image (the "prototype").
