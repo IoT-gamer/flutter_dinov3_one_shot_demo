@@ -29,6 +29,8 @@ class _CameraScreenState extends State<CameraScreen> {
   late final StatefulIsolate _isolate;
   double _similarityThreshold = 0.7;
   int _frameCounter = 0;
+  int _selectedInputSize = 320;
+  final List<int> _availableInputSizes = const [320, 400, 512, 768];
   static const int frameSkipCount = AppConstants.frameSkipCount;
 
   OrtSession? _session;
@@ -94,6 +96,7 @@ class _CameraScreenState extends State<CameraScreen> {
           'width': cameraImage.width,
           'height': cameraImage.height,
           'threshold': _similarityThreshold,
+          'inputSize': _selectedInputSize,
           'showLargestOnly': _showLargestAreaOnly,
         })
         .then((result) {
@@ -139,6 +142,7 @@ class _CameraScreenState extends State<CameraScreen> {
       final prototype = await _isolate.compute(createPrototype, {
         'session': _session!,
         'bytes': fileBytes,
+        'inputSize': _selectedInputSize,
       });
       if (!mounted) return;
 
@@ -199,6 +203,29 @@ class _CameraScreenState extends State<CameraScreen> {
       appBar: AppBar(
         title: const Text('DINOv3 One-Shot Segmentation'),
         actions: [
+          PopupMenuButton<int>(
+            initialValue: _selectedInputSize,
+            tooltip: 'Select Input Size',
+            onSelected: (int newSize) {
+              if (newSize != _selectedInputSize) {
+                setState(() {
+                  _selectedInputSize = newSize;
+                  _objectPrototype = null;
+                  _isSegmenting = false;
+                  _overlayImage = null;
+                });
+              }
+            },
+            itemBuilder: (BuildContext context) {
+              return _availableInputSizes.map((int size) {
+                return PopupMenuItem<int>(
+                  value: size,
+                  child: Text('$size x ${size * 3 ~/ 4}'),
+                );
+              }).toList();
+            },
+            icon: const Icon(Icons.aspect_ratio),
+          ),
           IconButton(
             icon: Icon(
               Icons.tune,

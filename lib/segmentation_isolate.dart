@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/services.dart';
-import 'package:flutter_dinov3_one_shot_demo/constants.dart';
 import 'package:flutter_onnxruntime/flutter_onnxruntime.dart';
 import 'package:image/image.dart' as img;
 import 'dart:math';
@@ -9,7 +8,6 @@ import 'dart:math';
 import 'package:opencv_dart/opencv_dart.dart' as cv;
 
 // Constants
-const int imageSize = AppConstants.inputSize;
 const int patchSize = 16;
 final imagenetMean = [0.485, 0.456, 0.406];
 final imagenetStd = [0.229, 0.224, 0.225];
@@ -34,6 +32,7 @@ Future<OrtSession> initializeSession(Map<String, dynamic> args) async {
 Future<List<double>> createPrototype(Map<String, dynamic> args) async {
   final OrtSession session = args['session'];
   final Uint8List rgbaBytes = args['bytes'];
+  final int imageSize = args['inputSize'];
   final image = img.decodeImage(rgbaBytes)!;
   final rgbImage = image.convert(numChannels: 3);
   final maskImage = img.Image(
@@ -64,7 +63,11 @@ Future<List<double>> createPrototype(Map<String, dynamic> args) async {
   print(
     'Isolate Debug: Mask Stats -> Max: $maxVal, Min: $minVal, Avg: $avgVal',
   );
-  final preprocessedData = _preprocessForPrototyping(rgbImage, maskImage);
+  final preprocessedData = _preprocessForPrototyping(
+    rgbImage,
+    maskImage,
+    imageSize,
+  );
   final inputTensor = await OrtValue.fromList(
     preprocessedData['input_tensor'] as Float32List,
     preprocessedData['shape'] as List<int>,
@@ -107,6 +110,7 @@ Future<Map<String, dynamic>> runSegmentation(Map<String, dynamic> args) async {
   final int height = args['height'];
   // Get threshold from args, with a default fallback.
   final double similarityThreshold = args['threshold'] ?? 0.7;
+  final int imageSize = args['inputSize'];
   final bool showLargestOnly = args['showLargestOnly'] ?? false;
 
   // Mats will be created, so we use a try/finally to ensure they are disposed.
@@ -234,8 +238,12 @@ Future<Map<String, dynamic>> runSegmentation(Map<String, dynamic> args) async {
   }
 }
 
-Map<String, dynamic> _preprocessForPrototyping(img.Image rgb, img.Image mask) {
-  final preprocessedImage = _preprocessImage(rgb);
+Map<String, dynamic> _preprocessForPrototyping(
+  img.Image rgb,
+  img.Image mask,
+  int imageSize,
+) {
+  final preprocessedImage = _preprocessImage(rgb, imageSize);
   final wPatches = preprocessedImage['w_patches'] as int;
   final hPatches = preprocessedImage['h_patches'] as int;
   final resizedMask = img.copyResize(
@@ -282,7 +290,7 @@ Map<String, dynamic> _preprocessImageFromBytes(
   };
 }
 
-Map<String, dynamic> _preprocessImage(img.Image image) {
+Map<String, dynamic> _preprocessImage(img.Image image, int imageSize) {
   final w = image.width;
   final h = image.height;
   final hPatches = imageSize ~/ patchSize;

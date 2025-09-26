@@ -10,6 +10,8 @@ This repository contains a Flutter application demonstrating real-time, one-shot
 
 * **Adjustable Sensitivity:** Fine-tune the segmentation sensitivity in real-time using an on-screen slider.
 
+* **Adjustable Model Resolution:** Select the model's input size on-the-fly to balance between processing speed and segmentation accuracy.
+
 * **Largest Area Filtering:** An option to display only the largest contiguous segmented object, removing smaller, potentially noisy detections.
 
 * **ONNX Runtime:** Utilizes the `flutter_onnxruntime` package for efficient, cross-platform model inference.
@@ -90,12 +92,19 @@ You need a reference image of the object you want to segment. The image must be 
     3. Tap the **Stop** icon to pause the segmentation process.
 
 4. Adjust Segmentation Sensitivity
-    1. Tap the Tune icon (Tuning icon) in the top-right corner of the app bar to show or hide the sensitivity slider.
+    1. Tap the **Tune** icon (Tuning icon) in the top-right corner of the app bar to show or hide the sensitivity slider.
 
     2. Drag the slider to adjust the similarity threshold in real-time. A higher value makes the segmentation stricter, while a lower value is more lenient.
 
+5. Change Model Input Size
 
-4. Filter for Largest Area
+    1. Tap the **Aspect Ratio** icon in the top-right corner of the app bar.
+
+    2. Select a different resolution from the menu. Smaller sizes (e.g., 320) are faster, while larger sizes are more accurate.
+
+    3. **Note:** Changing the input size will stop segmentation and clear the current reference prototype. You must set a new prototype before starting segmentation again.
+
+6. Filter for Largest Area
     1. While segmentation is active, you may see multiple disconnected areas highlighted.
 
     2. To focus only on the main object, tap the Filter icon (`filter_center_focus`).
@@ -104,9 +113,7 @@ You need a reference image of the object you want to segment. The image must be 
 
 ## 🔧 Configuration
 
-You can easily tweak the model's behavior by modifying the constants in `lib/constants.dart`:
-
-* `inputSize`: The input resolution for the model. Smaller sizes are faster but may be less accurate. For example, try comparing 320, 400, 768.
+You can tweak the model's behavior by modifying the constants in `lib/constants.dart`:
 
 * `frameSkipCount`: The number of camera frames to skip between each processing cycle. Increasing this value improves performance but reduces the real-time feel.
 
