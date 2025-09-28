@@ -224,7 +224,7 @@ class _CameraScreenState extends State<CameraScreen> {
               return _availableInputSizes.map((int size) {
                 return PopupMenuItem<int>(
                   value: size,
-                  child: Text('$size x ${size * 3 ~/ 4}'),
+                  child: Text('Input Size: $size'),
                 );
               }).toList();
             },
