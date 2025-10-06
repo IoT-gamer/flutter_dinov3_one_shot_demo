@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:camera/camera.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_onnxruntime/flutter_onnxruntime.dart';
 import 'package:image/image.dart' as img;
@@ -106,6 +107,8 @@ Future<Map<String, dynamic>> runSegmentation(Map<String, dynamic> args) async {
   final OrtSession session = args['session'];
   final List<double> objectPrototype = args['prototype'];
   final List<Uint8List> planes = args['planes'];
+  // Get the format, default to yuv420 if not provided
+  final ImageFormatGroup format = args['format'] ?? ImageFormatGroup.yuv420;
   final int width = args['width'];
   final int height = args['height'];
   // Get threshold from args, with a default fallback.
@@ -118,19 +121,42 @@ Future<Map<String, dynamic>> runSegmentation(Map<String, dynamic> args) async {
   // Mats for post-processing
   cv.Mat? maskMat, labels, stats, centroids;
   try {
-    // We assume an I420 format, which is common for Flutter's CameraImage.
-    final int yuvSize = width * height * 3 ~/ 2;
-    final yuvBytes = Uint8List(yuvSize);
-    yuvBytes.setRange(0, width * height, planes[0]);
-    yuvBytes.setRange(width * height, width * height * 5 ~/ 4, planes[1]);
-    yuvBytes.setRange(width * height * 5 ~/ 4, yuvSize, planes[2]);
-    yuvMat = cv.Mat.fromList(
-      height * 3 ~/ 2,
-      width,
-      cv.MatType.CV_8UC1,
-      yuvBytes,
-    );
-    rgbMat = cv.cvtColor(yuvMat, cv.COLOR_YUV2RGB_I420);
+    // Convert the incoming image format to a standard RGB Mat
+    if (format == ImageFormatGroup.bgra8888) {
+      // iOS format: BGRA
+      final bgraMat = cv.Mat.fromList(
+        height,
+        width,
+        cv.MatType.CV_8UC4,
+        planes[0],
+      );
+      rgbMat = cv.cvtColor(bgraMat, cv.COLOR_BGRA2RGB);
+      bgraMat.dispose();
+    } else if (format == ImageFormatGroup.yuv420) {
+      // Android format: I420 or NV21
+      final int yuvSize = width * height * 3 ~/ 2;
+      final yuvBytes = Uint8List(yuvSize);
+      yuvBytes.setRange(0, width * height, planes[0]); // Y plane
+      yuvBytes.setRange(
+        width * height,
+        width * height * 5 ~/ 4,
+        planes[1],
+      ); // U plane
+      yuvBytes.setRange(width * height * 5 ~/ 4, yuvSize, planes[2]); // V plane
+
+      yuvMat = cv.Mat.fromList(
+        height * 3 ~/ 2,
+        width,
+        cv.MatType.CV_8UC1,
+        yuvBytes,
+      );
+
+      // This conversion handles both I420 and NV21 layouts
+      rgbMat = cv.cvtColor(yuvMat, cv.COLOR_YUV2RGB_I420);
+    } else {
+      // Unsupported format
+      return {};
+    }
 
     rotatedMat = cv.rotate(rgbMat, cv.ROTATE_90_CLOCKWISE);
 

@@ -88,6 +88,9 @@ class _CameraScreenState extends State<CameraScreen> {
     }
     setState(() => _isProcessing = true);
 
+    // Check the image format
+    final imageFormat = cameraImage.format.group;
+
     _isolate
         .compute(runSegmentation, {
           'session': _session!,
@@ -95,6 +98,7 @@ class _CameraScreenState extends State<CameraScreen> {
           'planes': cameraImage.planes.map((p) => p.bytes).toList(),
           'width': cameraImage.width,
           'height': cameraImage.height,
+          'format': imageFormat,
           'threshold': _similarityThreshold,
           'inputSize': _selectedInputSize,
           'showLargestOnly': _showLargestAreaOnly,
