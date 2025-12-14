@@ -56,9 +56,12 @@ The application follows a simple but powerful workflow for one-shot segmentation
 Follow these steps to get the demo up and running on your local machine.
 
 1. Prerequisites
-    * Flutter SDK (stable channel)
+    * Flutter SDK (Dart SDK >= 3.10.0)
     * An IDE like VS Code or Android Studio
     * A physical device (Android or iOS) for testing camera features.
+    * **CMake** (required by `opencv_dart`'s use of Dart 3.10 **build hooks**).
+    * **macOS:** `brew install cmake`
+    * **Linux:** `sudo apt-get install cmake`
 
 2. Clone the Repository
     ```bash
@@ -76,8 +79,21 @@ Follow these steps to get the demo up and running on your local machine.
     ```bash
     flutter pub get
     ```
+5. iOS Specific Setup:
 
-4. Run the App
+    In `ios/Podfile`, change the following lines:
+
+    ```ruby
+    platform :ios, '16.0'
+
+    # existing code ...
+
+    use_frameworks! :linkage => :static
+
+    # existing code ...
+    ```
+
+6. Run the App
     Connect your device and run:
     ```bash
     flutter run
