@@ -242,10 +242,10 @@ packages:
     dependency: "direct main"
     description:
       name: flutter_onnxruntime
-      sha256: "55842e69293ec52c07f3065049ff7641e94e8a6cca3f659a913d5401a3994424"
+      sha256: "8e1517462cc829d4cafc49702bf11d8a3946be608ca5907d37bf713eb6490231"
       url: "https://pub.dev"
     source: hosted
-    version: "1.6.0"
+    version: "1.6.1"
   flutter_plugin_android_lifecycle:
     dependency: transitive
     description:
