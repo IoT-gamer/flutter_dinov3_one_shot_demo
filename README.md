@@ -1,5 +1,7 @@
 # DINOv3 One-Shot Segmentation Flutter Demo
 
+> ⚠️ **Notice:** iOS support is temporarily disabled in this version while the native build system is migrated to the new high-performance C++ FFI architecture. Currently, only Android is supported.
+
 This repository contains a Flutter application demonstrating real-time, one-shot object segmentation using a DINOv3 feature extractor model. The app uses the device's camera feed, allowing users to define a target object with a single reference image and see it segmented live.
 
 ## 📷 Screenshots
@@ -25,6 +27,8 @@ This repository contains a Flutter application demonstrating real-time, one-shot
 
 * **Real-Time Segmentation:** Segments objects directly from the live camera feed.
 
+* **Zero-Copy Native Pipeline:** Utilizes a custom C++ FFI bridge connecting directly to OpenCV and ONNX Runtime, eliminating Dart MethodChannel overhead for true real-time execution.
+
 * **Adjustable Sensitivity:** Fine-tune the segmentation sensitivity in real-time using an on-screen slider.
 
 * **Adjustable Model Resolution:** Select the model's input size on-the-fly to balance between processing speed and segmentation accuracy.
@@ -39,17 +43,17 @@ This repository contains a Flutter application demonstrating real-time, one-shot
 
 ## ⚙️ How It Works
 
-The application follows a simple but powerful workflow for one-shot segmentation:
+The application follows a simple but powerful workflow for one-shot segmentation, completely optimized at the native level:
 
 * **Create a Prototype:** The user selects a reference image from their gallery. This image must be a PNG with a transparent background (RGBA), where the object of interest is opaque.
 
-* **Extract Features:** The DINOv3 model processes this reference image and extracts a feature vector (the "object prototype") from the non-transparent parts of the image.
+* **Extract Features (Native):** The image is passed via FFI to a C++ backend where the DINOv3 model extracts a feature vector (the "object prototype") from the non-transparent parts of the image.
 
-* **Process Camera Feed:** The app continuously receives frames from the camera. To optimize performance, it only processes a fraction of these frames, determined by the `frameSkipCount`.
+* **Process Camera Feed (Zero-Copy):** The app continuously receives frames from the camera. The raw YUV byte pointers are passed directly to C++ without Dart-side serialization.
 
-* **Segment and Compare:** For each processed frame, the DINOv3 model extracts features for small patches of the image. The app then calculates the cosine similarity between the reference prototype and the feature vector of each patch.
+* **Segment and Compare (Native):** For each processed frame, OpenCV handles resizing and normalization via SIMD. The DINOv3 model extracts features for small patches of the image. The C++ core then calculates the cosine similarity between the reference prototype and the feature vector of each patch.
 
-* **Visualize the Mask:** Patches with a similarity score above a defined `similarityThreshold` are considered part of the target object. These patches are colored to create a segmentation mask, which is overlaid on the camera preview in real-time.
+* **Visualize the Mask:** Patches with a similarity score above a defined similarityThreshold are considered part of the target object. These patches are colored to create a segmentation mask, which is returned as a lightweight pointer to Flutter and overlaid on the camera preview in real-time.
 
 ## 🚀 Getting Started
 
@@ -58,10 +62,10 @@ Follow these steps to get the demo up and running on your local machine.
 1. Prerequisites
     * Flutter SDK (Dart SDK >= 3.10.0)
     * An IDE like VS Code or Android Studio
-    * A physical device (Android or iOS) for testing camera features.
-    * **CMake** (required by `opencv_dart`'s use of Dart 3.10 **build hooks**).
-    * **macOS:** `brew install cmake`
-    * **Linux:** `sudo apt-get install cmake`
+    * A physical device (Android) for testing camera features.
+    * **CMake**
+        * **macOS:** `brew install cmake`
+        * **Linux:** `sudo apt-get install cmake`
 
 2. Clone the Repository
     ```bash
@@ -79,21 +83,8 @@ Follow these steps to get the demo up and running on your local machine.
     ```bash
     flutter pub get
     ```
-5. iOS Specific Setup:
 
-    In `ios/Podfile`, change the following lines:
-
-    ```ruby
-    platform :ios, '16.0'
-
-    # existing code ...
-
-    use_frameworks! :linkage => :static
-
-    # existing code ...
-    ```
-
-6. Run the App
+5. Run the App
     Connect your device and run:
     ```bash
     flutter run
@@ -143,12 +134,6 @@ You need a reference image of the object you want to segment. The image must be 
     2. To focus only on the main object, tap the Filter icon (`filter_center_focus`).
 
     3. This will toggle a mode that processes the mask and displays only the largest single area, helping to reduce noise.
-
-## 🔧 Configuration
-
-You can tweak the model's behavior by modifying the constants in `lib/constants.dart`:
-
-* `frameSkipCount`: The number of camera frames to skip between each processing cycle. Increasing this value improves performance but reduces the real-time feel.
 
 ## 🙏 Acknowledgements
 This work builds upon the official implementations and research from the following projects:

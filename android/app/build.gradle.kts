@@ -32,6 +32,23 @@ android {
         versionName = flutter.versionName
     }
 
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+        }
+    }
+
+    sourceSets {
+        getByName("main") {
+            // Tells Gradle to package external .so files from the CMake FetchContent directory
+            jniLibs.srcDirs(
+                "${project.layout.buildDirectory.get()}/_deps/onnxruntime-src/jni",
+                // Or if using modern AGP .cxx path:
+                "src/main/jniLibs"
+            )
+        }
+    }
+
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.

@@ -10,7 +10,6 @@ import 'package:flutter_dinov3_one_shot_demo/constants.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:integral_isolates/integral_isolates.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:flutter_onnxruntime/flutter_onnxruntime.dart';
 import 'package:path/path.dart' as p;
 import '../segmentation_isolate.dart';
 import 'package:image/image.dart' as img;
@@ -21,7 +20,7 @@ class SegmentationCubit extends Cubit<SegmentationState> {
   SegmentationCubit() : super(const SegmentationState());
 
   late final StatefulIsolate _isolate;
-  OrtSession? _session;
+  bool _isModelReady = false;
   bool _isProcessing = false;
 
   Future<void> initialize() async {
@@ -35,7 +34,7 @@ class SegmentationCubit extends Cubit<SegmentationState> {
       final modelPath = p.join(directory.path, AppConstants.modelFilename);
       await File(modelPath).writeAsBytes(byteData.buffer.asUint8List());
       final token = RootIsolateToken.instance!;
-      _session = await _isolate.compute(initializeSession, {
+      _isModelReady = await _isolate.compute(initializeSession, {
         'path': modelPath,
         'token': token,
       });
@@ -51,8 +50,7 @@ class SegmentationCubit extends Cubit<SegmentationState> {
   }
 
   Future<void> setReferencePrototype() async {
-    if (_session == null ||
-        state.status == SegmentationStatus.creatingPrototype)
+    if (!_isModelReady || state.status == SegmentationStatus.creatingPrototype)
       return;
     emit(state.copyWith(status: SegmentationStatus.creatingPrototype));
 
@@ -85,7 +83,6 @@ class SegmentationCubit extends Cubit<SegmentationState> {
       }
 
       final prototype = await _isolate.compute(createPrototype, {
-        'session': _session!,
         'bytes': fileBytes,
         'inputSize': state.selectedInputSize,
       });
@@ -131,14 +128,13 @@ class SegmentationCubit extends Cubit<SegmentationState> {
     if (!state.isSegmenting ||
         _isProcessing ||
         state.objectPrototype == null ||
-        _session == null) {
+        !_isModelReady) {
       return;
     }
     _isProcessing = true;
 
     _isolate
         .compute(runSegmentation, {
-          'session': _session!,
           'prototype': state.objectPrototype!,
           'planes': cameraImage.planes.map((p) => p.bytes).toList(),
           'width': cameraImage.width,
@@ -212,7 +208,6 @@ class SegmentationCubit extends Cubit<SegmentationState> {
 
   @override
   Future<void> close() {
-    _session?.close();
     _isolate.dispose();
     return super.close();
   }

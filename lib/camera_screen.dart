@@ -47,9 +47,6 @@ class _CameraViewState extends State<CameraView> {
 
   void _processCameraImage(CameraImage cameraImage) {
     _frameCounter++;
-    if (_frameCounter % AppConstants.frameSkipCount != 0) {
-      return;
-    }
     // Forward the image to the cubit for processing
     if (mounted) {
       context.read<SegmentationCubit>().processCameraImage(cameraImage);

@@ -1,374 +1,216 @@
+import 'dart:ffi';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:camera/camera.dart';
+import 'package:ffi/ffi.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_onnxruntime/flutter_onnxruntime.dart';
-import 'package:image/image.dart' as img;
-import 'dart:math';
 
-import 'package:opencv_dart/opencv_dart.dart' as cv;
+// --- FFI Type Definitions ---
 
-// Constants
-const int patchSize = 16;
-final imagenetMean = [0.485, 0.456, 0.406];
-final imagenetStd = [0.229, 0.224, 0.225];
+// init_session(const char* model_path)
+typedef InitSessionC = Void Function(Pointer<Utf8> modelPath);
+typedef InitSessionDart = void Function(Pointer<Utf8> modelPath);
 
-Future<OrtSession> initializeSession(Map<String, dynamic> args) async {
+// create_prototype(uint8_t* rgba_data, int length, int input_size, int* out_feature_dim)
+typedef CreatePrototypeC =
+    Pointer<Float> Function(
+      Pointer<Uint8> rgbaData,
+      Int32 length,
+      Int32 inputSize,
+      Pointer<Int32> outFeatureDim,
+    );
+typedef CreatePrototypeDart =
+    Pointer<Float> Function(
+      Pointer<Uint8> rgbaData,
+      int length,
+      int inputSize,
+      Pointer<Int32> outFeatureDim,
+    );
+
+// run_segmentation(uint8_t* yuv_data, int width, int height, float* prototype, int feature_dim, double threshold, int input_size, bool largest_only, int* out_w, int* out_h)
+typedef RunSegmentationC =
+    Pointer<Float> Function(
+      Pointer<Uint8> yuvData,
+      Int32 width,
+      Int32 height,
+      Pointer<Float> prototype,
+      Int32 featureDim,
+      Double threshold,
+      Int32 inputSize,
+      Bool largestOnly,
+      Pointer<Int32> outW,
+      Pointer<Int32> outH,
+    );
+typedef RunSegmentationDart =
+    Pointer<Float> Function(
+      Pointer<Uint8> yuvData,
+      int width,
+      int height,
+      Pointer<Float> prototype,
+      int featureDim,
+      double threshold,
+      int inputSize,
+      bool largestOnly,
+      Pointer<Int32> outW,
+      Pointer<Int32> outH,
+    );
+
+// free_pointer(void* ptr) - Essential to prevent memory leaks from C++ allocations
+typedef FreePointerC = Void Function(Pointer<Void> ptr);
+typedef FreePointerDart = void Function(Pointer<Void> ptr);
+
+// --- Native Library Setup ---
+
+final DynamicLibrary nativeLib = Platform.isAndroid
+    ? DynamicLibrary.open('libdinov3_native.so')
+    : DynamicLibrary.process();
+
+final initSessionNative = nativeLib
+    .lookupFunction<InitSessionC, InitSessionDart>('init_session');
+final createPrototypeNative = nativeLib
+    .lookupFunction<CreatePrototypeC, CreatePrototypeDart>('create_prototype');
+final runSegmentationNative = nativeLib
+    .lookupFunction<RunSegmentationC, RunSegmentationDart>('run_segmentation');
+final freePointerNative = nativeLib
+    .lookupFunction<FreePointerC, FreePointerDart>('free_pointer');
+
+// --- Isolate Functions ---
+
+/// Returns a boolean indicating success since we no longer pass the OrtSession across the isolate.
+Future<bool> initializeSession(Map<String, dynamic> args) async {
   BackgroundIsolateBinaryMessenger.ensureInitialized(
     args['token'] as RootIsolateToken,
   );
+
   final String modelPath = args['path'];
-  final ort = OnnxRuntime();
-  final providers = Platform.isAndroid
-      ? [OrtProvider.NNAPI, OrtProvider.CPU]
-      : Platform.isIOS
-      ? [OrtProvider.CORE_ML, OrtProvider.CPU]
-      : [OrtProvider.CPU];
-  final options = OrtSessionOptions(providers: providers);
-  final session = await ort.createSession(modelPath, options: options);
-  print('✅ ONNX Session Initialized in Isolate with NNAPI provider.');
-  return session;
+  final pathPointer = modelPath.toNativeUtf8();
+
+  initSessionNative(pathPointer);
+  malloc.free(pathPointer);
+
+  print('✅ Native C++ ONNX Session Initialized in Isolate.');
+  return true;
 }
 
 Future<List<double>> createPrototype(Map<String, dynamic> args) async {
-  final OrtSession session = args['session'];
   final Uint8List rgbaBytes = args['bytes'];
-  final int imageSize = args['inputSize'];
-  final image = img.decodeImage(rgbaBytes)!;
-  final rgbImage = image.convert(numChannels: 3);
-  final maskImage = img.Image(
-    width: image.width,
-    height: image.height,
-    numChannels: 1,
+  final int inputSize = args['inputSize'];
+
+  // Allocate memory for the RGBA bytes
+  final Pointer<Uint8> rgbaPointer = malloc.allocate<Uint8>(rgbaBytes.length);
+  rgbaPointer.asTypedList(rgbaBytes.length).setAll(0, rgbaBytes);
+
+  // Pointer to receive the output dimension size from C++
+  final outDimPointer = malloc.allocate<Int32>(sizeOf<Int32>());
+
+  // Call native C++ function
+  final Pointer<Float> prototypePointer = createPrototypeNative(
+    rgbaPointer,
+    rgbaBytes.length,
+    inputSize,
+    outDimPointer,
   );
-  for (final pixel in image) {
-    maskImage.setPixelR(pixel.x, pixel.y, pixel.a);
+
+  final int featureDim = outDimPointer.value;
+  List<double> objectPrototype = [];
+
+  if (featureDim > 0 && prototypePointer != nullptr) {
+    // Copy native memory to Dart list
+    objectPrototype = prototypePointer.asTypedList(featureDim).toList();
+    // Free the C++ allocated float array
+    freePointerNative(prototypePointer.cast<Void>());
   }
 
-  num maxVal = 0;
-  num minVal = 255;
-  double avgVal = 0;
-  if (maskImage.isNotEmpty) {
-    for (final pixel in maskImage) {
-      final pVal = pixel.r;
-      // In a single-channel image, R is the value
-      if (pVal > maxVal) maxVal = pVal;
-      if (pVal < minVal) minVal = pVal;
-      avgVal += pVal;
-    }
-    avgVal /= maskImage.length;
-  } else {
-    minVal = 0;
-  }
-  // DEBUG: Print mask statistics for verification
-  print(
-    'Isolate Debug: Mask Stats -> Max: $maxVal, Min: $minVal, Avg: $avgVal',
-  );
-  final preprocessedData = _preprocessForPrototyping(
-    rgbImage,
-    maskImage,
-    imageSize,
-  );
-  final inputTensor = await OrtValue.fromList(
-    preprocessedData['input_tensor'] as Float32List,
-    preprocessedData['shape'] as List<int>,
-  );
-  final inputs = {'input_image': inputTensor};
-  final outputs = await session.run(inputs);
-  final featuresTensor = outputs.values.first;
-  final List<dynamic> flattenedList = await featuresTensor.asFlattenedList();
-  final allFeatures = Float32List.fromList(flattenedList.cast<double>());
-  final featureDim = allFeatures.length ~/ preprocessedData['num_patches'];
-  final patchMask = preprocessedData['patch_mask'] as List<bool>;
-  final foregroundFeatures = <List<double>>[];
-  for (int i = 0; i < patchMask.length; i++) {
-    if (patchMask[i]) {
-      final feature = allFeatures.sublist(i * featureDim, (i + 1) * featureDim);
-      foregroundFeatures.add(feature.cast<double>());
-    }
-  }
-  if (foregroundFeatures.isEmpty) return [];
-  final objectPrototype = List.filled(featureDim, 0.0);
-  for (final feature in foregroundFeatures) {
-    for (int i = 0; i < featureDim; i++) {
-      objectPrototype[i] += feature[i];
-    }
-  }
-  for (int i = 0; i < featureDim; i++) {
-    objectPrototype[i] /= foregroundFeatures.length;
-  }
-  await inputTensor.dispose();
-  await featuresTensor.dispose();
-  print('✅ Prototype created in Isolate.');
+  malloc.free(rgbaPointer);
+  malloc.free(outDimPointer);
+
+  print('✅ Native Prototype created in Isolate.');
   return objectPrototype;
 }
 
 Future<Map<String, dynamic>> runSegmentation(Map<String, dynamic> args) async {
-  final OrtSession session = args['session'];
   final List<double> objectPrototype = args['prototype'];
   final List<Uint8List> planes = args['planes'];
-  // Get the format, default to yuv420 if not provided
   final ImageFormatGroup format = args['format'] ?? ImageFormatGroup.yuv420;
   final int width = args['width'];
   final int height = args['height'];
-  // Get threshold from args, with a default fallback.
   final double similarityThreshold = args['threshold'] ?? 0.7;
-  final int imageSize = args['inputSize'];
+  final int inputSize = args['inputSize'];
   final bool showLargestOnly = args['showLargestOnly'] ?? false;
 
-  // Mats will be created, so we use a try/finally to ensure they are disposed.
-  cv.Mat? yuvMat, rgbMat, rotatedMat, resizedMat;
-  // Mats for post-processing
-  cv.Mat? maskMat, labels, stats, centroids;
-  try {
-    // Convert the incoming image format to a standard RGB Mat
-    if (format == ImageFormatGroup.bgra8888) {
-      // iOS format: BGRA
-      final bgraMat = cv.Mat.fromList(
-        height,
-        width,
-        cv.MatType.CV_8UC4,
-        planes[0],
-      );
-      rgbMat = cv.cvtColor(bgraMat, cv.COLOR_BGRA2RGB);
-      bgraMat.dispose();
-    } else if (format == ImageFormatGroup.yuv420) {
-      // Android format: I420 or NV21
-      final int yuvSize = width * height * 3 ~/ 2;
-      final yuvBytes = Uint8List(yuvSize);
-      yuvBytes.setRange(0, width * height, planes[0]); // Y plane
-      yuvBytes.setRange(
-        width * height,
-        width * height * 5 ~/ 4,
-        planes[1],
-      ); // U plane
-      yuvBytes.setRange(width * height * 5 ~/ 4, yuvSize, planes[2]); // V plane
-
-      yuvMat = cv.Mat.fromList(
-        height * 3 ~/ 2,
-        width,
-        cv.MatType.CV_8UC1,
-        yuvBytes,
-      );
-
-      // This conversion handles both I420 and NV21 layouts
-      rgbMat = cv.cvtColor(yuvMat, cv.COLOR_YUV2RGB_I420);
-    } else {
-      // Unsupported format
-      return {};
-    }
-
-    rotatedMat = cv.rotate(rgbMat, cv.ROTATE_90_CLOCKWISE);
-
-    final int hPatches = imageSize ~/ patchSize;
-    int wPatches =
-        (rotatedMat.cols * imageSize) ~/ (rotatedMat.rows * patchSize);
-    if (wPatches % 2 != 0) wPatches -= 1;
-    final int newH = hPatches * patchSize;
-    final int newW = wPatches * patchSize;
-
-    resizedMat = cv.resize(rotatedMat, (
-      newW,
-      newH,
-    ), interpolation: cv.INTER_CUBIC);
-    final preprocessed = _preprocessImageFromBytes(resizedMat.data, newW, newH);
-
-    final inputTensor = await OrtValue.fromList(
-      preprocessed['input_tensor'] as Float32List,
-      preprocessed['shape'] as List<int>,
-    );
-    final inputs = {'input_image': inputTensor};
-    final outputs = await session.run(inputs);
-    final featuresTensor = outputs.values.first;
-    final List<dynamic> flattenedList = await featuresTensor.asFlattenedList();
-    final testFeatures = Float32List.fromList(flattenedList.cast<double>());
-    final numPatches = preprocessed['num_patches'] as int;
-    final featureDim = testFeatures.length ~/ numPatches;
-    final similarityScores = List<double>.filled(numPatches, 0.0);
-    for (int i = 0; i < numPatches; i++) {
-      final feature = testFeatures.sublist(
-        i * featureDim,
-        (i + 1) * featureDim,
-      );
-      similarityScores[i] = _cosineSimilarity(feature, objectPrototype);
-    }
-    await inputTensor.dispose();
-    await featuresTensor.dispose();
-
-    List<double> finalScores = similarityScores;
-    if (showLargestOnly) {
-      final w = preprocessed['w_patches'] as int;
-      final h = preprocessed['h_patches'] as int;
-      final maskData = Uint8List.fromList(
-        similarityScores
-            // Use the dynamic threshold here
-            .map((s) => s > similarityThreshold ? 255 : 0)
-            .toList(),
-      );
-      maskMat = cv.Mat.fromList(h, w, cv.MatType.CV_8UC1, maskData);
-
-      labels = cv.Mat.empty();
-      stats = cv.Mat.empty();
-      centroids = cv.Mat.empty();
-      cv.connectedComponentsWithStats(
-        maskMat,
-        labels,
-        stats,
-        centroids,
-        8,
-        cv.MatType.CV_32S,
-        cv.CCL_DEFAULT,
-      );
-      if (stats.rows > 1) {
-        int maxArea = 0;
-        int largestComponentLabel = 0;
-        // Start from 1 to skip background component
-        for (int i = 1; i < stats.rows; i++) {
-          final area = stats.at<int>(i, cv.CC_STAT_AREA);
-          if (area > maxArea) {
-            maxArea = area;
-            largestComponentLabel = i;
-          }
-        }
-
-        if (largestComponentLabel != 0) {
-          final filteredScores = List<double>.filled(numPatches, 0.0);
-          final labelsData = labels.data.buffer.asInt32List();
-          for (int i = 0; i < numPatches; i++) {
-            if (labelsData[i] == largestComponentLabel) {
-              filteredScores[i] = similarityScores[i];
-            }
-          }
-
-          finalScores = filteredScores;
-        }
-      }
-    }
-
-    return {
-      'scores': finalScores,
-      'width': preprocessed['w_patches'],
-      'height': preprocessed['h_patches'],
-    };
-  } finally {
-    // IMPORTANT - Dispose all Mats to prevent memory leaks.
-    yuvMat?.dispose();
-    rgbMat?.dispose();
-    rotatedMat?.dispose();
-    resizedMat?.dispose();
-    // Dispose new Mats
-    maskMat?.dispose();
-    labels?.dispose();
-    stats?.dispose();
-    centroids?.dispose();
+  if (format != ImageFormatGroup.yuv420) {
+    print('Error: Native pipeline currently expects YUV420 format.');
+    return {};
   }
-}
 
-Map<String, dynamic> _preprocessForPrototyping(
-  img.Image rgb,
-  img.Image mask,
-  int imageSize,
-) {
-  final preprocessedImage = _preprocessImage(rgb, imageSize);
-  final wPatches = preprocessedImage['w_patches'] as int;
-  final hPatches = preprocessedImage['h_patches'] as int;
-  final resizedMask = img.copyResize(
-    mask,
-    width: wPatches,
-    height: hPatches,
-    interpolation: img.Interpolation.nearest,
+  // Correctly assemble YUV planes to match exact height * 1.5 * width I420 size
+  final int yuvSize = width * height * 3 ~/ 2;
+  final Pointer<Uint8> yuvPointer = malloc.allocate<Uint8>(yuvSize);
+  final yuvList = yuvPointer.asTypedList(yuvSize);
+
+  final int ySize = width * height;
+  final int uvSize = ySize ~/ 4;
+
+  // Y plane
+  yuvList.setRange(0, ySize, planes[0]);
+
+  // U plane (handle plane length variations safely)
+  final uPlane = planes[1];
+  yuvList.setRange(
+    ySize,
+    ySize + uvSize,
+    uPlane.length >= uvSize ? uPlane.sublist(0, uvSize) : uPlane,
   );
-  // Use '.red' for single-channel mask data.
-  final maskBytes = resizedMask.getBytes(order: img.ChannelOrder.red);
-  final patchMask = maskBytes.map((e) => e > 127).toList();
 
-  return {...preprocessedImage, 'patch_mask': patchMask};
-}
+  // V plane (handle plane length variations safely)
+  final vPlane = planes[2];
+  yuvList.setRange(
+    ySize + uvSize,
+    yuvSize,
+    vPlane.length >= uvSize ? vPlane.sublist(0, uvSize) : vPlane,
+  );
 
-Map<String, dynamic> _preprocessImageFromBytes(
-  Uint8List imageBytes,
-  int newW,
-  int newH,
-) {
-  final int hPatches = newH ~/ patchSize;
-  final int wPatches = newW ~/ patchSize;
+  // Allocate and pack the prototype feature vector
+  final Pointer<Float> prototypePointer = malloc.allocate<Float>(
+    objectPrototype.length * sizeOf<Float>(),
+  );
+  prototypePointer
+      .asTypedList(objectPrototype.length)
+      .setAll(0, objectPrototype);
+
+  // Pointers to receive output width and height from C++
+  final outW = malloc.allocate<Int32>(sizeOf<Int32>());
+  final outH = malloc.allocate<Int32>(sizeOf<Int32>());
+
+  // Run native segmentation (Preprocessing, ONNX inference, Cosine Similarity, and Connected Components all happen in C++)
+  final Pointer<Float> scoresPointer = runSegmentationNative(
+    yuvPointer,
+    width,
+    height,
+    prototypePointer,
+    objectPrototype.length,
+    similarityThreshold,
+    inputSize,
+    showLargestOnly,
+    outW,
+    outH,
+  );
+
+  final int wPatches = outW.value;
+  final int hPatches = outH.value;
   final int numPatches = wPatches * hPatches;
-  final inputTensor = Float32List(1 * 3 * newH * newW);
-  int bufferIndex = 0;
-  // This loop rearranges the RGB data into the NCHW format required by the model
-  // and applies the ImageNet normalization constants.
-  for (int c = 0; c < 3; c++) {
-    for (int y = 0; y < newH; y++) {
-      for (int x = 0; x < newW; x++) {
-        final int pixelIndex = (y * newW + x) * 3;
-        final double val = imageBytes[pixelIndex + c] / 255.0;
-        inputTensor[bufferIndex++] = (val - imagenetMean[c]) / imagenetStd[c];
-      }
-    }
+
+  List<double> finalScores = [];
+  if (numPatches > 0 && scoresPointer != nullptr) {
+    finalScores = scoresPointer.asTypedList(numPatches).toList();
+    freePointerNative(scoresPointer.cast<Void>());
   }
 
-  return {
-    'input_tensor': inputTensor,
-    'shape': [1, 3, newH, newW],
-    'w_patches': wPatches,
-    'h_patches': hPatches,
-    'num_patches': numPatches,
-  };
-}
+  // Cleanup memory
+  malloc.free(yuvPointer);
+  malloc.free(prototypePointer);
+  malloc.free(outW);
+  malloc.free(outH);
 
-Map<String, dynamic> _preprocessImage(img.Image image, int imageSize) {
-  final w = image.width;
-  final h = image.height;
-  final hPatches = imageSize ~/ patchSize;
-  var wPatches = (w * imageSize) ~/ (h * patchSize);
-  if (wPatches % 2 != 0) wPatches -= 1;
-  final newH = hPatches * patchSize;
-  final newW = wPatches * patchSize;
-  final resizedImg = img.copyResize(
-    image,
-    width: newW,
-    height: newH,
-    interpolation: img.Interpolation.cubic,
-  );
-  final numPatches = wPatches * hPatches;
-  final inputTensor = Float32List(1 * 3 * newH * newW);
-  int bufferIndex = 0;
-  for (int c = 0; c < 3; c++) {
-    for (int y = 0; y < newH; y++) {
-      for (int x = 0; x < newW; x++) {
-        final pixel = resizedImg.getPixel(x, y);
-        double val;
-        if (c == 0) {
-          val = pixel.rNormalized.toDouble();
-        } else if (c == 1) {
-          val = pixel.gNormalized.toDouble();
-        } else {
-          val = pixel.bNormalized.toDouble();
-        }
-        inputTensor[bufferIndex++] = (val - imagenetMean[c]) / imagenetStd[c];
-      }
-    }
-  }
-  return {
-    'input_tensor': inputTensor,
-    'shape': [1, 3, newH, newW],
-    'w_patches': wPatches,
-    'h_patches': hPatches,
-    'num_patches': numPatches,
-  };
-}
-
-double _cosineSimilarity(List<double> vec1, List<double> vec2) {
-  double dotProduct = 0.0;
-  double mag1 = 0.0;
-  double mag2 = 0.0;
-  for (int i = 0; i < vec1.length; i++) {
-    dotProduct += vec1[i] * vec2[i];
-    mag1 += vec1[i] * vec1[i];
-    mag2 += vec2[i] * vec2[i];
-  }
-  mag1 = sqrt(mag1);
-  mag2 = sqrt(mag2);
-  if (mag1 == 0 || mag2 == 0) return 0.0;
-  return dotProduct / (mag1 * mag2);
+  return {'scores': finalScores, 'width': wPatches, 'height': hPatches};
 }
