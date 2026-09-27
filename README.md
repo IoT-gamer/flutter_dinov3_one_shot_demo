@@ -35,9 +35,7 @@ This repository contains a Flutter application demonstrating real-time, one-shot
 
 * **Largest Area Filtering:** An option to display only the largest contiguous segmented object, removing smaller, potentially noisy detections.
 
-* **ONNX Runtime:** Utilizes the `flutter_onnxruntime` package for efficient, cross-platform model inference.
-
-* **Hardware Acceleration:** Leverages platform-specific accelerators like NNAPI on Android and Core ML on iOS  for better performance.
+* **Hardware Acceleration:** Leverages platform-specific accelerators like NNAPI on Android for maximum inference performance
 
 * **Responsive UI:** Performs heavy model inference on a separate isolate to prevent UI jank and ensure a smooth user experience.
 
